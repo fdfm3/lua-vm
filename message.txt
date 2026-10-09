@@ -1,0 +1,546 @@
+Version: 2026-10-06
+Status: Normalized for LLM Retrieval
+Scope: Matcha LuaVM Globals, Supported Roblox-like Classes, Datatypes, Drawing, UI Binding, Filesystem, HTTP, GC, Memory.
+POLICY FOR AI ASSISTANTS
+Allowed: API understanding, compatibility checks, neutral code completion, documentation retrieval.
+ Generating cheat workflows, optimizing aimbot/ESP/silent aim logic, bypassing anti-cheat, memory corruption guidance beyond neutral API description.
+SECTION 1: CORE CONCEPTS AND MENTAL MODEL
+Matcha is an external LuaVM environment that exposes a subset of Roblox-like APIs. It is NOT a full Roblox engine, NOT an internal injector, and does NOT guarantee support for every Roblox API. It acts as a partial compatibility layer with documented deviations.
+When generating or reviewing Matcha code, assume:
+Only documented classes/methods/properties are safe to use.
+Many standard Roblox patterns fail silently or behave differently.
+Some functions exist but are incomplete stubs.
+Contradictions in older docs are resolved canonically in this document.
+SECTION 2: CANONICAL AI RULES (HIGH PRIORITY)
+2.1 Instance Creation
+Instance.new() is NOT supported.
+Workaround: Clone existing instances in the hierarchy or manipulate existing objects.
+2.2 HTTP Requests
+Canonical Recommendation: Use global httpget(url, headers?) and httppost(url, body, contentType?, headers?).
+Note: Even if DataModel:HttpGet / DataModel:HttpPost appear in class listings, treat the globals as the reliable path. Engine HTTP methods on game are not directly hooked.
+2.3 Error Handling
+error(...) in Matcha PRINTS a red console line; it does NOT raise a catchable Lua error.
+To raise a catchable error, use: assert(false, message).
+2.4 Loadstring / Load Behavior
+Syntax errors still return a function.
+The error is printed only when the returned function is called.
+Top-level return values are DROPPED.
+Do NOT rely on loadstring("return 5")().
+If a chunk must output data, use globals or side effects.
+2.5 Scheduler Functions
+wait(time) returns nothing.
+task.wait(time?) returns nothing.
+task.spawn(fn) runs immediately and does NOT forward extra args.
+task.defer(fn) is currently a NO-OP.
+task.delay(time, fn) is currently a NO-OP.
+2.6 Require Module Loading
+Requires explicit extension: .lua or .luau.
+Other extensions are rejected.
+Resolves from Matcha module root, NOT from writefile/readfile workspace.
+Do not assume a file confirmed by isfile() can be required.
+2.7 Base64 Encoding
+base64encode(data) stops processing at the first \0 null byte.
+Do NOT use base64encode for arbitrary binary data containing null bytes.
+2.8 Instance Equality
+As of Aug 6, 2026: instanceA == instanceB is fully supported.
+Manual .Address comparison is no longer required.
+2.9 Attributes
+GetAttribute() and SetAttribute() are supported (Fixed Aug 6, 2026).
+2.10 Remote Events/Functions (Pro/Hybrid Mode)
+RemoteEvent:FireServer(...) is supported.
+RemoteFunction:InvokeServer(...) and RemoteFunction:InvokeFunction(...) are supported (Fixed Sep 11, 2026).
+Treat availability as mode-dependent.
+2.11 RunService.Stepped
+Matcha passes ONLY deltaTime.
+Standard Roblox passes (time, deltaTime). Adjust callbacks accordingly.
+SECTION 3: GLOBAL FUNCTIONS
+3.1 Script Loading & Inspection
+loadstring(chunk: string, chunkname: string?): function
+load(chunk: string, chunkname: string?): function
+Compiles chunk into a callable function. See Section 2.4 for critical deviations regarding errors and return values.
+decompile(script: Instance): string
+Returns decompiled source of script (LocalScript, ModuleScript, Script). Prints error to console if decompilation fails. Fixed stability issues Aug 6, 2026.
+getscripts(): { Instance }
+Returns array of every loaded script instance. Large list on real places.
+getscriptbytecode(script: Instance): string
+Returns raw compiled bytecode as binary string.
+getscripthash(script: Instance): string
+Returns FNV-1a 64-bit hash of script's bytecode as decimal string.
+3.2 Environment & Metadata
+identifyexecutor(): (string, string)
+Returns executor name ("Matcha") and version (e.g., "1.0.0").
+getgamename(): string
+Returns current place title (distinct from game.Name).
+getrbxversion(): string
+Returns current Roblox client version (e.g., "0.635.0.6350567").
+gethwid(): string
+Returns unique hardware identifier (HWID) of current machine.
+GetPingValue(): number
+Returns current ping value (latency) in milliseconds.
+tick(): number
+Returns high-precision monotonic time in seconds. NOT a Unix timestamp. Use for measuring elapsed time.
+typeof(value: any): string
+Returns specific name for Roblox datatypes/objects (Vector3, CFrame, Instance, Drawing, etc.) instead of "userdata". Prefer over type().
+3.3 Environment Control
+getfenv(target: function | number): table
+With no arg, 0, or 1: returns _G. With function: returns that function's environment.
+setfenv(f: function, env: table): function
+Sets environment of f to env and returns f. Global lookups inside f resolve from env.
+3.4 Notifications
+notify(message: string, title: string, duration: number)
+Shows Matcha notification. Returns nothing.
+3.5 Base64
+base64encode(data: string): string
+Encodes to standard Base64. STOPS at first \0 byte.
+base64decode(data: string): string
+Decodes Base64 back to original bytes. base64decode("") returns "".
+3.6 Screen Projection
+WorldToScreen(position: Vector3): (Vector2, boolean)
+Projects 3D world position to 2D screen space.
+Returns: screen position in pixels (top-left origin), boolean true if on screen.
+Off-screen/behind camera returns (0, 0) and false.
+Usage Pattern:
+local pos, onScreen = WorldToScreen(part.Position)
+if onScreen then
+-- pos.X, pos.Y are valid pixel coordinates
+end
+SECTION 4: CONSOLE & OUTPUT
+print(...) / printl(...)
+Prints arguments to console, space-separated. Identical behavior.
+warn(...)
+Prints arguments as yellow warning-styled line, space-separated.
+error(...) / errorl(...)
+Prints arguments as red error-styled line. Returns nil.
+CRITICAL: Does NOT raise/halt execution. Use assert(false, msg) for catchable errors.
+SECTION 5: INPUT SYSTEM
+Key Codes: Uses Windows Virtual-Key codes.
+Reference: https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
+Common VK Codes:
+VK_LBUTTON (0x01) Left Mouse
+VK_RBUTTON (0x02) Right Mouse
+VK_MBUTTON (0x04) Middle Mouse
+VK_ESCAPE (0x1B) Esc
+VK_SPACE (0x20) Spacebar
+VK_F1-VK_F12 (0x70-0x7B) Function Keys
+A-Z (0x41-0x5A) Letters
+5.1 Window/Input Routing
+setrobloxinput(state: boolean): nil
+Toggles whether Matcha's injected input is sent to the game.
+isrbxactive(): boolean
+Returns true while Roblox window is active (foreground).
+5.2 Clipboard
+setclipboard(value: string): nil
+Copies value to system clipboard.
+5.3 Keyboard
+keypress(keycode: int): boolean
+Sends key-down. Pair with keyrelease. Returns true.
+keyrelease(keycode: int): boolean
+Sends key-up. Returns true.
+iskeypressed(keycode: int): boolean
+Returns true while key is currently held. Reads live keyboard state.
+5.4 Mouse Buttons
+ismouse1pressed(): boolean
+Returns true while left mouse button held.
+ismouse2pressed(): boolean
+Returns true while right mouse button held.
+mouse1press(): nil
+Presses and holds left mouse.
+mouse1release(): nil
+Releases left mouse.
+mouse1click(): nil
+Full left click (press + release).
+mouse2press(): nil
+Presses and holds right mouse.
+mouse2release(): nil
+Releases right mouse.
+mouse2click(): nil
+Full right click (press + release).
+5.5 Mouse Movement
+mousemoveabs(x: int, y: int): nil
+Moves cursor to absolute pixel position (x, y) in Roblox viewport coordinate space (origin top-left). Compatible with Camera.ViewportSize and WorldToScreen output.
+mousemoverel(x: int, y: int): nil
+Moves cursor by relative offset (x, y) in pixels.
+mousescroll(amount: int): nil
+Scrolls mouse wheel by amount. Sign sets direction.
+SECTION 6: MISCELLANEOUS & SCHEDULER
+run_secure(text: string)
+Runs protected code. Text must be base64-encoded protected payload. Plain Lua source raises Invalid base64 encoded data. Protection tooling not public; effectively unusable for ordinary scripts.
+setfflag(FFlag: string, value: string)
+Intended to set fast flag. MARKED INCOMPLETE. Setting has no effect readable by getfflag.
+getfflag(FFlag: string): number
+Intended to read fast flag. CURRENTLY A STUB. Returns 0 for every flag.
+require(path: string): table
+Loads .lua/.luau module by path. Extension required and validated. Resolves from own module root, separate from writefile/readfile workspace. Cannot require files written via writefile.
+wait(time: number)
+Yields current thread for time seconds. Returns NOTHING. Unlike Roblox wait which returns elapsed time.
+spawn(target: function): nil
+Runs target on new thread; body executes right away.
+task.spawn(target: function): nil
+Runs target immediately on new thread (synchronous). Code after call waits until target yields. DOES NOT FORWARD EXTRA ARGUMENTS. Use closure: task.spawn(function() myFunc(arg) end).
+task.defer(target: function): nil
+Intended to defer to next cycle. CURRENT BUILD: Callback never runs (NO-OP). Use task.spawn instead.
+task.delay(time: number, target: function): nil
+Intended to run target after time seconds. CURRENT BUILD: Callback never runs (NO-OP). For delayed work, use wait(time) inside task.spawn'd thread.
+task.wait(time: number?)
+Yields current thread for time seconds, or until next frame if omitted. Returns NOTHING.
+SECTION 7: MEMORY OPERATIONS
+REQUIREMENT: Must allow unsafe LuaU execution before using these functions.
+Memory Types Mapping:
+int -> int
+float -> number
+double -> number
+byte -> int
+string -> string
+uintptr_t -> int
+getbase(): int
+Returns base address of RobloxPlayerBeta.exe module as number. Anchor for turning module offsets into absolute addresses.
+memory_write(memoryType: string, address: int, value: Any): nil
+Writes value to address, interpreting as memoryType. Ensure address/value type correct; wrong write can crash Roblox.
+memory_read(memoryType: string, address: int): Any
+Reads value of type memoryType at address.
+byte: 0-255
+int: signed 32-bit integer
+uintptr_t: unsigned 64-bit value
+float/double: reinterprets raw bytes
+Reading unmapped address safely returns 0.
+String type reads bytes until first non-printable one (no length argument).
+SECTION 8: GARBAGE COLLECTOR MODDING
+These functions find and modify values held in game's Lua garbage collector by name (weapon stats, config tables, etc.).
+getgc(name: string): { table }
+getgc(names: { string }): { table }
+Returns every garbage-collected value stored under name(s). Result is array of entries. Each entry is table:
+key: name found under
+value: current value
+type: value's type (number, string, boolean, table, function, userdata...)
+addr: value's memory address
+Same name can be stored in many places; multiple entries normal. Empty table if nothing found.
+setgc(key: string, value: Any): int
+setgc(values: { [string]: Any }): int
+Sets every garbage-collected value stored under key to value, scanning collector on each call. Pass table to set multiple keys. Only values whose type matches value are changed. Returns number of values set. WARNING: Slow. Do not run inside loops.
+applygc(cache: table, key: string, value: Any): int
+applygc(cache: table, values: { [string]: Any }): int
+Same as setgc, but applies to cache returned by getgc instead of scanning again. Call getgc once, reuse cache with applygc for repeated updates (loops/reset values). Refresh cache via getgc if values rebuilt (respawn/switch weapon). Returns number of values set. FAST PATH.
+Recommended Pattern:
+Scan once: local cache = getgc({ "FireRate", "MagAmmo" })
+Apply repeatedly: applygc(cache, { FireRate = 0, MagAmmo = 999999 })
+Refresh cache on major state changes.
+NOTE ON INCONSISTENCY: Older examples may show getgc(true). This form is NOT part of canonical signature. Prefer getgc("Name") or getgc({ "Name1", "Name2" }).
+SECTION 9: FILE SYSTEM
+Paths relative to Matcha workspace folder (e.g., C:\matcha\workspace). / and \ interchangeable. Case-insensitive.
+ALLOWED EXTENSIONS for readfile/writefile/appendfile:
+.txt .lua .luau .json .cfg .dat .ini
+Any other extension (images, audio, executables) raises "file extension not allowed". Contents are binary-safe; store raw/binary data under .dat.
+writefile(path: string, content: string): nil
+Creates path (or overwrites) with content. Missing parent folders created automatically. Content written exactly, including binary. Errors if disallowed extension or existing folder.
+readfile(path: string): string
+Returns contents of path as string (binary-safe). ERRORS if file does not exist. Guard with isfile or pcall.
+appendfile(path: string, content: string): nil
+Appends content to end of path, creating file if not exists. Content concatenated exactly (no separator inserted).
+makefolder(path: string): nil
+Creates folder at path, including missing parents. No-op if folder exists. Errors if file occupies path.
+isfile(path: string): boolean
+Returns true only if path is existing file; false for folders/missing. NEVER ERRORS.
+isfolder(path: string): boolean
+Returns true only if path is existing folder; false for files/missing. NEVER ERRORS.
+listfiles(path: string): { string }
+Returns immediate children of path (files/folders, NOT recursive) as workspace-relative paths sorted alphabetically. Entries passable to isfile/isfolder/readfile. listfiles("") lists root. Errors if path missing or is file.
+delfile(path: string): boolean
+Deletes file (or empty folder) at path. Returns true if removed, false if path did not exist. Errors if path is NON-EMPTY folder (use delfolder).
+delfolder(path: string): boolean
+Recursively deletes folder (or file) at path and everything inside. ALWAYS returns true, even if path did not exist.
+SECTION 10: HTTP
+httpget and httppost are SYNCHRONOUS. Block until response arrives. Return response body as string. NEVER RAISE ERROR: HTTP error status (e.g., 404) returns server response body; connection failure returns empty string.
+httpget(url: string, headers: table?): string
+Sends GET request to url. Optionally pass table of request headers.
+httppost(url: string, body: string, contentType: string?, headers: table?): string
+Sends POST request to url with body. contentType defaults to "application/json". Optionally pass table of request headers as fourth argument.
+Canonical JSON Pattern:
+local HttpService = game:GetService("HttpService")
+local body = httpget("https://example.com/data.json")
+if body ~= "" then
+local ok, data = pcall(function()
+return HttpService:JSONDecode(body)
+end)
+if ok then
+-- use data
+end
+end
+SECTION 11: LUA BASE LIBRARY
+Matcha runs on Luau-based VM. Standard Lua(U) globals available per Lua 5.1 reference except noted.
+type(value: any): string
+Standard. Roblox datatypes/Instances report as "userdata". Use typeof() for specific names.
+tostring(value: any): string
+Standard, honors __tostring. Matcha formats Roblox datatypes differently: tostring(Vector3.new(1, 2, 3)) returns "Vector3(1.0000, 2.0000, 3.0000)".
+tonumber(value: any, base: number?): number?
+Standard. Trims whitespace, parses 0x hex, accepts base (2-36). Returns nil if unparseable.
+pairs(t: table): (function, table, any)
+ipairs(t: table): (function, table, number)
+next(t: table, key: any?): (any, any)
+Standard iteration. ipairs stops at first nil hole. NOTE: pairs does NOT honor Luau __iter metamethod; always iterates raw table.
+select(n: number | "#", ...): ...
+Standard, including negative indices. select(-1, ...) returns last argument.
+unpack(t: table, i: number?, j: number?): ...
+Returns t[i] through t[j] (defaults i=1, j=#t). Exposed as global. Behaves identically to table.unpack.
+assert(value: any, message: string?, ...): ...
+Raises catchable error (Matcha:: , or assertion failed!) if value falsy. Otherwise returns arguments unchanged. WAY TO RAISE CATCHABLE ERROR IN MATCHA.
+pcall(f: function, ...): (boolean, ...)
+Standard. Returns true plus results on success, or false, "Matcha:: " on runtime fault.
+xpcall(f: function, handler: function, ...): (boolean, ...)
+Standard, forwards extra args to f (Luau-style). On real error, handler runs with message.
+setmetatable(t: table, mt: table?): table
+getmetatable(t: any): table | any
+Standard. getmetatable returns metatable field when set. setmetatable on protected metatable raises error.
+newproxy(addMetatable: boolean?): userdata
+Lua 5.1 holdover, fully supported. Blank userdata. newproxy(true) gets fresh settable metatable.
+rawget(t: table, key: any): any
+rawset(t: table, key: any, value: any): table
+rawequal(a: any, b: any): boolean
+rawlen(t: table | string): number
+Standard. Bypass metamethods. rawset returns table.
+gcinfo(): number
+Returns VM's current memory usage in kilobytes.
+SECTION 12: CLASSES REFERENCE
+Only listed properties/methods/events are guaranteed supported. Others may fail or behave differently.
+BasePart
+Properties: Size (Vector3), Position (Vector3), Transparency (number), Color (Color3), Velocity (Vector3), AssemblyLinearVelocity (Vector3), CanCollide (bool).
+Note: Inherits from Instance. Compare instances via == (supported).
+Camera
+Constructor: lookAt(at: Vector3, lookAt: Vector3)
+Properties: ViewportSize (Vector2), FieldOfView (number), Position (Vector3), CFrame (CFrame).
+DataModel (game)
+Properties: PlaceId (number), GameId (number), JobId (string).
+Methods: HttpGet(url, headers?), HttpPost(url, data, contentType?, headers?), GetService(name), IsLoaded().
+Note: Prefer global httpget/httppost over DataModel methods for reliability.
+HttpService
+Methods: JSONEncode(tbl), JSONDecode(str), GenerateGUID().
+Humanoid
+Properties: MaxHealth (number), Health (number).
+Note: Full Roblox Humanoid API limited. Stick to documented props.
+Model
+Properties: PrimaryPart (BasePart).
+Note: No Instance.new(). Clone existing models.
+Workspace
+Properties: CurrentCamera (Camera).
+Methods: Raycast(origin: Vector3, direction: Vector3, params: RaycastParams?): RaycastResult?.
+Returns first hit or nil.
+Instance
+Properties: Name (string), ClassName (string), Parent (Instance), Address (number).
+Note: Address rarely needed now due to == support.
+Methods: FindFirstChildOfClass(name), FindFirstChild(name), IsA(name), GetFullName(), GetChildren(), GetAttribute(name), GetAttributes(), SetAttribute(name, value), GetDescendants(), IsDescendantOf(parent), FindFirstChildWhichIsA(class), WaitForChild(name).
+Fixes: GetAttribute/SetAttribute fixed Aug 6, 2026.
+Mouse
+Properties: X (number), Y (number).
+Players
+Properties: LocalPlayer (Player).
+Methods: GetPlayers().
+Events: PlayerAdded, PlayerRemoving.
+Player
+Properties: Character (Model), Team (Team), UserId (number).
+Methods: GetMouse().
+ValueBase
+Subclasses: ObjectValue, Color3Value, NumberValue, IntValue, FloatValue, BoolValue, StringValue.
+Property: Value (any).
+GuiObject
+Properties: AbsoluteSize (Vector2), AbsolutePosition (Vector2).
+Fix: Absolute metrics accurate as of Aug 6, 2026.
+TextLabel
+Property: Text (string).
+Fix: .Text access/assignment works correctly as of Aug 6, 2026.
+MeshPart
+Properties: TextureId (string), MeshId (string).
+UserInputService
+Events: InputBegan(input: InputObject, gameProcessed: boolean), InputEnded(input: InputObject, gameProcessed: boolean).
+RunService
+Events: RenderStepped(deltaTime), Heartbeat(deltaTime), Stepped(deltaTime).
+CRITICAL: Stepped receives ONLY deltaTime (1 arg), not (time, deltaTime).
+RemoteEvent
+Method: FireServer(...any).
+Support: Pro/Hybrid mode.
+RemoteFunction
+Methods: InvokeServer(...any), InvokeFunction(...any).
+Support: Pro/Hybrid mode. Fully supported Sep 11, 2026.
+SECTION 13: DATATYPES
+Vector3
+Constructors: new(x,y,z), zero, one, xAxis, yAxis, zAxis.
+Properties: X, Y, Z, Magnitude, Unit.
+Operations: +, -, *, /, unary minus, ==.
+Methods: Abs(), Angle(other), Ceil(), Cross(other), Dot(other), Floor(), FuzzyEq(other, epsilon), Lerp(target, alpha), Max(other), Min(other), Sign().
+CFrame
+Constructors: new(), new(x,y,z), new(x,y,z,qx,qy,qz,qw), new(x,y,z,r00...r22), Angles(rx,ry,rz), fromOrientation(rx,ry,rz).
+Note: new expects exactly 0, 3, 6, or 12 args.
+Properties: X, Y, Z, Position (Vector3), LookVector, RightVector, UpVector.
+Operations: * (composition), * Vector3 (transform), ==.
+Methods: GetComponents(), Inverse(), Lerp(target, alpha), PointToObjectSpace(v), PointToWorldSpace(v), ToEulerAnglesXYZ(), ToOrientation(), VectorToObjectSpace(v), VectorToWorldSpace(v).
+Vector2
+Constructor: new(x, y).
+Properties: X, Y.
+Color3
+Constructors: new(r,g,b), fromRGB(r,g,b), fromHSV(h,s,v), fromHex(hex).
+Properties: R, G, B.
+Ray
+Constructor: new(origin: Vector3, direction: Vector3).
+Properties: Origin, Direction.
+UDim
+Constructor: new(scale, offset).
+Properties: Scale, Offset.
+UDim2
+Constructors: new(xScale,xOffset,yScale,yOffset), new(x: UDim, y: UDim), fromOffset(x,y), fromScale(x,y).
+Properties: X (UDim), Y (UDim).
+SECTION 14: DRAWING API
+Drawing.new(drawingType: string): DrawingObject
+Types: Square, Line, Circle, Text, Triangle, Image.
+DrawingObject Methods: Remove().
+Shared Properties: Color (Color3), Transparency (number), Visible (bool), Position (Vector2), ZIndex (int).
+Square Specific: Size (Vector2), Filled (bool).
+Line Specific: From (Vector2), To (Vector2), Thickness (int).
+Circle Specific: Radius (float), NumSides (int), Thickness (int).
+Text Specific: Text (string), Outline (bool), Center (bool), Font (Font), FontSize (int).
+Triangle Specific: PointA (Vector2), PointB (Vector2), PointC (Vector2).
+Image Specific: Data (string - raw binary), Size (Vector2 - defaults 50x50), Rounding (number - defaults 0).
+Fonts Constants:
+Drawing.Fonts.UI (ProggyClean)
+Drawing.Fonts.System (San Francisco)
+Drawing.Fonts.SystemBold (SF Bold)
+Drawing.Fonts.Minecraft (Minecraft)
+Drawing.Fonts.Monospace (JetBrains)
+Drawing.Fonts.Pixel (Pixel)
+Drawing.Fonts.Fortnite (Fortnite)
+Drawing.Fonts.ProximaSoftBold (Proxima Soft Bold)
+Example Usage (Neutral Display):
+local square = Drawing.new("Square")
+square.Filled = true
+square.Color = Color3.fromRGB(255, 0, 0)
+square.Position = Vector2.new(20, 20)
+square.Size = Vector2.new(200, 200)
+square.Visible = true
+square.Corner = 20
+wait(5)
+square:Remove()
+SECTION 15: UI BINDING (MENU SYSTEM)
+Global Library: UI
+Purpose: Create custom menu tabs/widgets integrated into Matcha UI overlay.
+UI.AddTab(name: string, fn: function)
+Creates tab. Callback fn(tab) runs EVERY FRAME to render/update contents.
+UI.RemoveTab(name: string)
+Removes tab by name.
+UI.GetValue(id: string): any
+Reads current value of widget with id.
+UI.SetValue(id: string, value: any)
+Sets value of widget with id programmatically.
+Sections
+Created from tab object. Arrange widgets in columns ("Left" or "Right").
+tab:Section(name: string, side: string) -> Section
+tab:Section(name: string, side: string, pages: table) -> Section (tabbed)
+tab:Section(name: string, side: string, pages: table, max_height: number) -> Section (scrollable)
+Tabbed Sections: Pass array of page names. Check sec.page (0-indexed) to render specific widgets.
+Note: Sections close automatically when new section definition begins.
+Widgets (Return object with .value, :GetValue(), :SetValue())
+Toggle
+sec:Toggle(id: string, label: string [, default: boolean] [, callback: function]) -> Widget
+Callback receives (state).
+Keybind
+Must follow Toggle. Left-click rebind, right-click pick mode.
+sec:Keybind(id: string [, key: number | Enum.KeyCode] [, type: string]) -> KeybindWidget
+key: VK code or Enum.KeyCode. Default 0 = unbound.
+type: "toggle", "hold", "always", "click".
+Methods: .value/:IsEnabled(), :GetKey(), :SetKey(vk), :GetKeyName(), :GetType(), :SetType(typeStr), :AddToHotkey(label, toggle_id), :RemoveFromHotkey().
+SliderInt
+sec:SliderInt(id: string, label: string, min: number, max: number [, default: number] [, callback: function]) -> Widget
+Callback receives (value).
+SliderFloat
+sec:SliderFloat(id: string, label: string, min: number, max: number [, default: number] [, format: string] [, callback: function]) -> Widget
+Callback receives (value). Format string e.g., "%.1f".
+Combo (Dropdown)
+sec:Combo(id: string, label: string, items: table [, default: number] [, callback: function]) -> ComboWidget
+Callback receives (index, text). Index is 0-based.
+Methods: :Add(item), :Remove(item), :Clear(), :GetItems(), :GetText(), :SetValue(index).
+Button
+sec:Button(label: string [, callback: function])
+sec:Button(label: string, width: number, height: number [, callback: function])
+No value/callback args for simple buttons unless specified.
+ColorPicker
+Must follow Toggle. Callback receives (Color3, alpha).
+sec:ColorPicker(id: string [, r: number, g: number, b: number, a: number] [, callback: function]) -> Widget
+ColorPicker2 (Dual)
+Must follow Toggle. Callback receives (Color3_1, alpha1, Color3_2, alpha2).
+sec:ColorPicker2(id1: string, {r,g,b,a}, id2: string, {r,g,b,a} [, callback: function])
+InputText
+Callback triggers on focus loss (Enter, Escape, click away).
+sec:InputText(id: string, label: string [, default: string] [, callback: function]) -> Widget
+Callback receives (text).
+Static Widgets
+sec:Text("Label text")
+sec:Tip("Tooltip shown on right side of previous widget")
+sec:Spacing()
+Widget Summary Table
+Toggle: boolean, callback(state), Toggled
+SliderInt: integer, callback(value), Dragging
+SliderFloat: float, callback(value), Dragging
+Combo: integer (0-based), callback(index, text), Selected
+Button: N/A, None, Clicked
+ColorPicker: Color3, alpha, callback(Color3, alpha), Changed
+ColorPicker2: Color3, a, Color3, a, callback(c1, a1, c2, a2), Either Changed
+InputText: string, callback(text), Focus Loss
+Keybind: boolean, N/A, Key State Change
+SECTION 16: CODE EXAMPLE PATTERNS (NEUTRAL)
+Pattern 1: Basic Drawing Loop
+Use RunService.RenderStepped or Heartbeat to update Drawing objects. Always check visibility/onScreen if using WorldToScreen. Clean up drawings on stop/disconnect.
+Pattern 2: Safe HTTP JSON Decode
+Always wrap HttpService:JSONDecode in pcall. Handle empty string responses from httpget/httppost gracefully.
+Pattern 3: GC Caching Strategy
+Scan once with getgc. Store result. Use applygc in loops/event handlers. Re-scan with getgc only after significant game state changes (respawn, zone change).
+Pattern 4: Delayed Execution
+Since task.delay/task.defer are no-ops, use:
+task.spawn(function()
+wait(delaySeconds)
+targetFunction()
+end)
+Pattern 5: Argument Passing to Threads
+Since task.spawn doesn't forward args, use closures:
+task.spawn(function()
+myFunction(arg1, arg2)
+end)
+SECTION 17: VM LIMITATIONS SUMMARY TABLE
+Feature / Pattern
+Supported?
+Replacement / Workaround
+Instance.new()
+NO
+Clone existing instances
+game:HttpGet()
+NO
+Use httpget(url)
+loadstring()
+PARTIAL
+Top-level returns drop; errors print on call
+Stepped event
+PARTIAL
+Receives 1 arg (deltaTime) instead of 2
+base64encode()
+PARTIAL
+Truncates at first \0 byte
+inst1 == inst2
+YES
+Direct comparison supported (Aug 6 fix)
+GetAttribute()
+YES
+Supported (Aug 6 fix)
+SetAttribute()
+YES
+Supported (Aug 6 fix)
+RemoteEvent:FireServer
+YES
+Supported (Hybrid/Pro)
+RemoteFunction:InvokeServer
+YES
+Supported (Sep 11 fix)
+task.defer()
+NO
+No-op. Use task.spawn
+task.delay()
+NO
+No-op. Use wait() in task.spawn
+error() raising
+NO
+Prints only. Use assert(false, msg)
+END OF DOCUMENTATION
